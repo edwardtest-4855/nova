@@ -24,7 +24,7 @@ def cached(key,ttl,fn):
   if key in cache and time.time()-cache[key][0]<ttl:return cache[key][1]
   val=fn();cache[key]=(time.time(),val);return val
 def assets():
- if not KEY:return []
+ if not KEY:return market_assets()
  def get():
   data=request('/exchange/currencies',{'active':'true','flow':'standard'});return [dict(ticker=x['ticker'],network=x['network'],name=x.get('name',x['ticker']),image=x.get('image',''),buy=x.get('isAvailable',True) and x.get('isAvailableForBuy',True),sell=x.get('isAvailable',True) and x.get('isAvailableForSell',True),memo=x.get('hasExtraId',False)) for x in data if not x.get('isFiat') and x.get('ticker') and x.get('network')]
  with db() as c: disabled={r[0] for r in c.execute('select asset from disabled')}
@@ -33,6 +33,26 @@ def market():
  def get():
   r=requests.get('https://data-api.binance.vision/api/v3/ticker/price',timeout=10);r.raise_for_status();return {'prices':{x['symbol']:x['price'] for x in r.json()},'updated':int(time.time())}
  return cached('market',30,get)
+def market_assets():
+ def get():
+  r=requests.get('https://data-api.binance.vision/api/v3/exchangeInfo',timeout=15);r.raise_for_status()
+  symbols=r.json()['symbols']; coins={x['baseAsset'] for x in symbols if x['status']=='TRADING' and x.get('isSpotTradingAllowed') and x['quoteAsset']=='USDT'};coins.add('USDT')
+  names={'BTC':'Bitcoin','ETH':'Ethereum','USDT':'Tether','USDC':'USD Coin','SOL':'Solana','BNB':'BNB','XRP':'XRP','ADA':'Cardano','DOGE':'Dogecoin','TRX':'TRON','LTC':'Litecoin','AVAX':'Avalanche','LINK':'Chainlink','DOT':'Polkadot','XLM':'Stellar','BCH':'Bitcoin Cash','POL':'Polygon'}
+  return [dict(ticker=x.lower(),network='market',name=names.get(x,x),image='',buy=True,sell=True,memo=False,preview=True) for x in sorted(coins)]
+ with db() as c: disabled={r[0] for r in c.execute('select asset from disabled')}
+ return [x for x in cached('binance-assets',600,get) if x['ticker']+':market' not in disabled]
+def market_quote(p):
+ a={x['ticker']+':market' for x in market_assets()};f=p.get('from');t=p.get('to')
+ if f not in a or t not in a or f==t:raise ValueError('Choose two different market assets.')
+ if p.get('fixed'):raise ValueError('Fixed rates unavailable in market preview.')
+ n=Decimal(str(p.get('amount','0')))
+ if not n.is_finite() or n<=0 or n>Decimal('1000000000000'):raise ValueError('Enter a valid positive amount.')
+ m=market(); prices=m['prices']
+ def price(x):
+  coin=x.split(':')[0].upper();return Decimal('1') if coin=='USDT' else Decimal(prices.get(coin+'USDT','0'))
+ x,y=price(f),price(t)
+ if x<=0 or y<=0:raise ValueError('Market price unavailable.')
+ return {'amount':format(n*x/y,'.12g'),'rateId':None,'validUntil':None,'flow':'market-preview','preview':True,'updated':m['updated']}
 def quote(p):
  a={x['ticker']+':'+x['network']:x for x in assets()}; f=a.get(p.get('from'));t=a.get(p.get('to'))
  if not f or not t or f==t or not f['sell'] or not t['buy']:raise ValueError('Select an available exchange pair.')
@@ -104,10 +124,11 @@ class H(BaseHTTPRequestHandler):
     n=int(self.headers.get('Content-Length','0'))
     if not 0<n<=20000:return self.sendj({'error':'Invalid body'},400)
     p=json.loads(self.rfile.read(n))
-   if path=='/api/config':return self.sendj({'connected':bool(KEY),'live':LIVE and bool(KEY),'fixed':FIXED})
+   if path=='/api/config':return self.sendj({'connected':bool(KEY),'live':LIVE and bool(KEY),'fixed':FIXED and bool(KEY),'preview':not bool(KEY)})
    if path=='/api/assets':return self.sendj(assets())
    if path=='/api/market':return self.sendj(market())
    if path=='/api/quote' and post:
+    if not KEY:return self.sendj(market_quote(p))
     args,q=quote(p);return self.sendj({'amount':q['toAmount'],'rateId':q.get('rateId'),'validUntil':q.get('validUntil'),'flow':args['flow']})
    if path=='/api/create' and post:
     if not LIVE or not KEY:raise ValueError('Live swaps are disabled until provider setup and approval.')

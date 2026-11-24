@@ -24,3 +24,6 @@ Deploy behind HTTPS reverse proxy on a private backend listener, set PUBLIC_ORIG
 - https://changenow.io/program-affiliate — v2 create payload and partner API
 - https://support.changenow.io/hc/en-us/articles/22686695418396-Integration-Transaction-management-and-troubleshooting — provider fixed-rate approval, memo and validation limitations
 - https://developers.binance.com/en/docs/products/spot/rest-api — public market API
+
+## Binance market preview
+If CHANGENOW_API_KEY is absent, the app loads active Binance Spot USDT markets and calculates reference cross-rates from public prices. No network availability, executable quotes, fees, deposits or payouts are implied. The wallet step is a non-transactional preview. Live Binance custody/conversion/payout integration is not implemented. Keep ENABLE_SWAPS=0. Upload server.py and public/app.js to the existing repository to trigger Railway redeployment.
